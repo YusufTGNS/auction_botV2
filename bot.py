@@ -8,6 +8,7 @@ import cv2
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
+intents.members = True  # Kullanıcı rolü değişikliklerini takip edebilmek için
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -23,6 +24,10 @@ async def start(ctx):
     else:
         manager.add_user(user_id, ctx.author.name)
         await ctx.send('''Merhaba! Hoş geldiniz! Başarılı bir şekilde kaydoldunuz! Her dakika yeni resimler alacaksınız ve bunları elde etme şansınız olacak! Bunu yapmak için “Al!” butonuna tıklamanız gerekiyor! Sadece “Al!” butonuna tıklayan ilk üç kullanıcı resmi alacaktır! =)''')
+
+# Admin kontrol fonksiyonu (Discord rolünde "Administrator" izni olup olmadığını kontrol eder)
+def is_admin(ctx):
+    return any(role.permissions.administrator for role in ctx.author.roles)
 
 # Resim göndermek için zamanlanmış bir görev
 @tasks.loop(minutes=1)
@@ -81,6 +86,36 @@ async def get_my_score(ctx):
     with open(collage_path, 'rb') as img:
         file = discord.File(img)
         await ctx.send(file=file)
+
+# Admin Komutları
+
+@bot.command()
+async def admin_add_prize(ctx, image: str):
+    # Yalnızca admin komutu (Administrator iznine sahip kullanıcılar için)
+    if not is_admin(ctx):
+        await ctx.send("Bu komutu kullanma izniniz yok. Lütfen Administrator iznine sahip olun.")
+        return
+    
+    manager.add_prize([(image,)])
+    await ctx.send(f"{image} adlı resim başarıyla eklendi.")
+
+@bot.command()
+async def admin_set_message_interval(ctx, minutes: int):
+    if not is_admin(ctx):
+        await ctx.send("Bu komutu kullanma izniniz yok. Lütfen Administrator iznine sahip olun.")
+        return
+
+    send_message.change_interval(minutes=minutes)
+    await ctx.send(f"Resim gönderme sıklığı {minutes} dakika olarak ayarlandı.")
+
+@bot.command()
+async def admin_bonus_points(ctx, user_id: int, points: int):
+    if not is_admin(ctx):
+        await ctx.send("Bu komutu kullanma izniniz yok. Lütfen Administrator iznine sahip olun.")
+        return
+
+    manager.add_bonus_points(user_id, points)
+    await ctx.send(f"{points} bonus puan, kullanıcıya başarıyla eklendi.")
 
 @bot.event
 async def on_interaction(interaction):
