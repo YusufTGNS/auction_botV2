@@ -1,8 +1,9 @@
 import discord
 from discord.ext import commands, tasks
-from logic import DatabaseManager, hide_img
+from logic import DatabaseManager, hide_img, create_collage
 from config import TOKEN, DATABASE
 import os
+import cv2
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -18,23 +19,28 @@ manager.create_tables()
 async def start(ctx):
     user_id = ctx.author.id
     if user_id in manager.get_users():
-        await ctx.send("Zaten kayıtlısınız!")
+        await ctx.send('Zaten kayıtlısınız!')
     else:
         manager.add_user(user_id, ctx.author.name)
-        await ctx.send("""Merhaba! Hoş geldiniz! Başarılı bir şekilde kaydoldunuz! Her dakika yeni resimler alacaksınız ve bunları elde etme şansınız olacak! Bunu yapmak için “Al!” butonuna tıklamanız gerekiyor! Sadece “Al!” butonuna tıklayan ilk üç kullanıcı resmi alacaktır! =)""")
+        await ctx.send('''Merhaba! Hoş geldiniz! Başarılı bir şekilde kaydoldunuz! Her dakika yeni resimler alacaksınız ve bunları elde etme şansınız olacak! Bunu yapmak için “Al!” butonuna tıklamanız gerekiyor! Sadece “Al!” butonuna tıklayan ilk üç kullanıcı resmi alacaktır! =)''')
 
 # Resim göndermek için zamanlanmış bir görev
 @tasks.loop(minutes=1)
 async def send_message():
     for user_id in manager.get_users():
-        prize_id, img = manager.get_random_prize()[:2]
-        hide_img(img)
-        user = await bot.fetch_user(user_id) 
+        prize = manager.get_random_prize()
+        if prize is None:
+            continue
+        prize_id, img = prize[:2]
+        hide_img(img)  # Resmi gizle
+        user = await bot.fetch_user(user_id)
         if user:
             await send_image(user, f'hidden_img/{img}', prize_id)
         manager.mark_prize_used(prize_id)
 
 async def send_image(user, image_path, prize_id):
+    if not os.path.exists(image_path):
+        return  # Eğer dosya yoksa, işlem yapma
     with open(image_path, 'rb') as img:
         file = discord.File(img)
         button = discord.ui.Button(label="Al!", custom_id=str(prize_id))
@@ -45,10 +51,36 @@ async def send_image(user, image_path, prize_id):
 @bot.command()
 async def rating(ctx):
     res = manager.get_rating()
-    res = [f'| @{x[0]:<11} | {x[1]:<11}|\n{"_"*26}' for x in res]
+    if not res:
+        await ctx.send('Henüz hiçbir sıralama verisi yok.')
+        return
+
+    res = [f'| @{x[0]:<11} | {x[1]:<11}|' for x in res]
     res = '\n'.join(res)
     res = f'|USER_NAME    |COUNT_PRIZE|\n{"_"*26}\n' + res
     await ctx.send(f"```\n{res}\n```")
+
+@bot.command()
+async def get_my_score(ctx):
+    user_id = ctx.author.id
+    info = manager.get_winners_img(user_id)
+    prizes = [x[0] for x in info]
+
+    if not prizes:
+        await ctx.send('Henüz hiç resim kazanmamışsınız!')
+        return
+
+    image_paths = os.listdir('img')
+    image_paths = [os.path.join('img', x) if x in prizes else os.path.join('hidden_img', x) for x in image_paths]
+
+    collage = create_collage(image_paths)
+    collage_path = os.path.join('collages', f'{user_id}_collage.jpg')
+    os.makedirs('collages', exist_ok=True)
+    cv2.imwrite(collage_path, collage)
+
+    with open(collage_path, 'rb') as img:
+        file = discord.File(img)
+        await ctx.send(file=file)
 
 @bot.event
 async def on_interaction(interaction):
@@ -56,8 +88,8 @@ async def on_interaction(interaction):
         custom_id = interaction.data['custom_id']
         user_id = interaction.user.id
 
-        if manager.get_winners_count < 3:
-            res = manager.add_winner(user_id, custom_id)
+        if manager.get_winners_count(int(custom_id)) < 3:
+            res = manager.add_winner(user_id, int(custom_id))
             if res:
                 img = manager.get_prize_img(custom_id)
                 with open(f'img/{img}', 'rb') as photo:
@@ -67,7 +99,6 @@ async def on_interaction(interaction):
                 await interaction.response.send_message(content="Bu resme zaten sahipsiniz!", ephemeral=True)
         else:
             await interaction.response.send_message(content="Maalesef, birisi bu resmi çoktan aldı...", ephemeral=True)
-
 
 @bot.event
 async def on_ready():
